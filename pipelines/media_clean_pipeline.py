@@ -10,6 +10,14 @@ from tools.common import result
 
 
 OUTPUT_SUFFIXES = ("_分辨率校正", "_视频", "_整理中")
+STEP_INDEX = {
+    "递归重命名": 1,
+    "视频/GIF 分离": 2,
+    "视频横竖屏分类": 3,
+    "图片横竖屏分类": 4,
+    "图片降分辨率": 5,
+    "清理小视频文件": 6,
+}
 
 
 def _unit_output_dirs(input_dir, output_base):
@@ -49,6 +57,11 @@ def _remove_workspace_if_done(path, context: dict, max_remaining_files: int = 9)
     return True
 
 
+def _resume_index(params: dict) -> int:
+    step = str(params.get("_resume_step") or "").strip()
+    return STEP_INDEX.get(step, 1)
+
+
 def _run_one(params: dict, context: dict) -> dict:
     logger = context["logger"]
     stats = {}
@@ -58,54 +71,78 @@ def _run_one(params: dict, context: dict) -> dict:
     output_base = normalize_path(params.get("output_dir"))
     dirs = _unit_output_dirs(input_dir, output_base)
     workspace = dirs["workspace"] if output_base else input_dir
+    resume_index = _resume_index(params)
 
-    context["set_current_step"]("递归重命名", 1)
-    rename_params = dict(params)
-    rename_params["input_dir"] = str(input_dir)
-    rename_params["output_dir"] = str(workspace)
-    rename_params["move_files"] = True
-    stats["rename"] = media_tools.rename_and_classify(rename_params, context)["stats"]
+    if resume_index <= 1:
+        context["set_current_step"]("递归重命名", 1)
+        rename_params = dict(params)
+        rename_params["input_dir"] = str(input_dir)
+        rename_params["output_dir"] = str(workspace)
+        rename_params["move_files"] = True
+        stats["rename"] = media_tools.rename_and_classify(rename_params, context)["stats"]
+    else:
+        logger.info("Resume skip step", step="递归重命名")
+        stats["rename"] = {"skipped": True, "resume": True}
 
     step_workspace = workspace if workspace.exists() else input_dir
     step_params = dict(params)
     step_params["input_dir"] = str(step_workspace)
 
-    context["set_current_step"]("视频/GIF 分离", 2)
-    split_params = dict(step_params)
-    split_params["output_dir"] = str(dirs["videos"])
-    stats["split_video_gif"] = media_tools.split_video_gif(split_params, context)["stats"]
+    if resume_index <= 2:
+        context["set_current_step"]("视频/GIF 分离", 2)
+        split_params = dict(step_params)
+        split_params["output_dir"] = str(dirs["videos"])
+        stats["split_video_gif"] = media_tools.split_video_gif(split_params, context)["stats"]
+    else:
+        logger.info("Resume skip step", step="视频/GIF 分离")
+        stats["split_video_gif"] = {"skipped": True, "resume": True}
 
-    context["set_current_step"]("视频横竖屏分类", 3)
-    video_params = dict(step_params)
-    video_input = dirs["videos"] if dirs["videos"].exists() else step_workspace
-    video_params["input_dir"] = str(video_input)
-    video_params["output_dir"] = str(dirs["videos"])
-    stats["video_orientation"] = media_tools.classify_video_orientation(video_params, context)["stats"]
+    if resume_index <= 3:
+        context["set_current_step"]("视频横竖屏分类", 3)
+        video_params = dict(step_params)
+        video_input = dirs["videos"] if dirs["videos"].exists() else step_workspace
+        video_params["input_dir"] = str(video_input)
+        video_params["output_dir"] = str(dirs["videos"])
+        stats["video_orientation"] = media_tools.classify_video_orientation(video_params, context)["stats"]
+    else:
+        logger.info("Resume skip step", step="视频横竖屏分类")
+        stats["video_orientation"] = {"skipped": True, "resume": True}
 
-    context["set_current_step"]("图片横竖屏分类", 4)
-    image_params = dict(step_params)
-    image_params["output_dir"] = str(step_workspace)
-    image_params["classify_portrait"] = True
-    stats["landscape"] = media_tools.classify_landscape_images(image_params, context)["stats"]
+    if resume_index <= 4:
+        context["set_current_step"]("图片横竖屏分类", 4)
+        image_params = dict(step_params)
+        image_params["output_dir"] = str(step_workspace)
+        image_params["classify_portrait"] = True
+        stats["landscape"] = media_tools.classify_landscape_images(image_params, context)["stats"]
+    else:
+        logger.info("Resume skip step", step="图片横竖屏分类")
+        stats["landscape"] = {"skipped": True, "resume": True}
 
-    if params.get("enable_resize", True):
+    if params.get("enable_resize", True) and resume_index <= 5:
         context["set_current_step"]("图片降分辨率", 5)
         resize_params = dict(step_params)
         resize_params["output_dir"] = str(dirs["images"])
         resize_params["recursive"] = True
         resize_params["move_files"] = True
         stats["resize"] = media_tools.resize_images(resize_params, context)["stats"]
+    elif params.get("enable_resize", True):
+        logger.info("Resume skip step", step="图片降分辨率")
+        stats["resize"] = {"skipped": True, "resume": True}
     else:
         logger.info("Resize skipped by option")
 
-    context["set_current_step"]("清理小视频文件", 6)
-    if params.get("enable_delete"):
-        delete_params = dict(step_params)
-        delete_params["input_dir"] = str(dirs["videos"])
-        stats["delete_small_videos"] = media_tools.delete_small_videos(delete_params, context)["stats"]
+    if resume_index <= 6:
+        context["set_current_step"]("清理小视频文件", 6)
+        if params.get("enable_delete"):
+            delete_params = dict(step_params)
+            delete_params["input_dir"] = str(dirs["videos"])
+            stats["delete_small_videos"] = media_tools.delete_small_videos(delete_params, context)["stats"]
+        else:
+            logger.info("Delete cleanup skipped because enable_delete=false")
+            stats["delete_small_videos"] = {"skipped": True}
     else:
-        logger.info("Delete cleanup skipped because enable_delete=false")
-        stats["delete_small_videos"] = {"skipped": True}
+        logger.info("Resume skip step", step="清理小视频文件")
+        stats["delete_small_videos"] = {"skipped": True, "resume": True}
 
     stats["cleanup"] = {
         "workspace_empty_dirs_removed": media_tools.remove_empty_dirs(step_workspace, context),
@@ -151,6 +188,8 @@ def run(params: dict, context: dict) -> dict:
         child_params["input_dir"] = str(child)
         if output_dir:
             child_params["output_dir"] = str(output_dir)
+        if context.get("set_current_target"):
+            context["set_current_target"](str(child))
         context["logger"].info("Batch media folder", input_dir=str(child), output_dir=child_params.get("output_dir", ""))
         child_result = _run_one(child_params, context)
         stats["folders"] += 1

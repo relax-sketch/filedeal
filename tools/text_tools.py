@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from core.path_utils import normalize_path
-from tools.common import iter_files, read_text_any, result
+from core.path_utils import fit_path_length, normalize_path
+from tools.common import iter_files, read_text_any, result, write_text_file
 
 
 DROP_PATTERNS = [
@@ -12,6 +12,8 @@ DROP_PATTERNS = [
     r"www\.[^\s，。；、]+",
     r"(?:广告|推广|最新网址|最新地址|请收藏|加入书签|TXT下载|免费阅读)",
 ]
+
+ANCHOR_PUNCTUATION = "。！？!?；;：:"
 
 
 def clean_text(text: str, aggressive: bool = False) -> tuple[str, dict]:
@@ -68,9 +70,7 @@ def clean_txt_basic(params: dict, context: dict) -> dict:
         if preview:
             logger.info("Preview TXT clean", file=str(src), encoding=encoding, output=str(dst), dropped=stats["dropped_lines"])
         else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            with dst.open("w", encoding="utf-8", newline="\n") as fh:
-                fh.write(cleaned)
+            write_text_file(fit_path_length(dst), cleaned, encoding="utf-8", newline="\n")
             logger.info("Cleaned TXT", file=str(src), output=str(dst), encoding=encoding)
     return result(True, "TXT 清洗完成", str(output_dir), totals)
 
@@ -115,9 +115,8 @@ def split_txt_near_size(params: dict, context: dict) -> dict:
     if context.get("preview"):
         context["logger"].info("Preview split TXT", file=str(input_file), chunks=len(chunks), encoding=encoding)
     else:
-        output_dir.mkdir(parents=True, exist_ok=True)
         for idx, chunk in enumerate(chunks, start=1):
-            (output_dir / f"{input_file.stem}_{idx:03d}.txt").write_text(chunk, encoding="utf-8")
+            write_text_file(fit_path_length(output_dir / f"{input_file.stem}_{idx:03d}.txt"), chunk, encoding="utf-8")
     return result(True, "TXT 切分完成", str(output_dir), {"chunks": len(chunks)})
 
 
@@ -169,9 +168,36 @@ def replace_names(params: dict, context: dict) -> dict:
     if context.get("preview"):
         context["logger"].info("Preview name replace", output=str(output_file), counts=counts)
     else:
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(text, encoding="utf-8")
+        write_text_file(fit_path_length(output_file), text, encoding="utf-8")
     return result(True, "人物名替换完成", str(output_file), {"replacements": counts})
+
+
+def _nearest_position(candidates: list[int], target: int) -> int | None:
+    if not candidates:
+        return None
+    return min(candidates, key=lambda candidate: abs(candidate - target))
+
+
+def find_anchor_split_position(text: str, anchor_pos: int, window_chars: int) -> int:
+    window_chars = max(0, window_chars)
+    left = max(0, anchor_pos - window_chars)
+    right = min(len(text), anchor_pos + window_chars)
+
+    newline_positions = [0] if anchor_pos == 0 else []
+    newline_positions.extend(idx + 1 for idx in range(left, right) if text[idx] == "\n")
+    punctuation_positions = [idx + 1 for idx in range(left, right) if text[idx] in ANCHOR_PUNCTUATION]
+    priority_groups = (
+        [pos for pos in newline_positions if pos <= anchor_pos],
+        [pos for pos in punctuation_positions if pos <= anchor_pos],
+        [pos for pos in newline_positions if pos > anchor_pos],
+        [pos for pos in punctuation_positions if pos > anchor_pos],
+    )
+    for candidates in priority_groups:
+        split_pos = _nearest_position(candidates, anchor_pos)
+        if split_pos is not None:
+            return split_pos
+
+    return anchor_pos
 
 
 def split_novel_by_anchor(params: dict, context: dict) -> dict:
@@ -180,20 +206,25 @@ def split_novel_by_anchor(params: dict, context: dict) -> dict:
         raise ValueError("input_file is required")
     output_dir = normalize_path(params.get("output_dir")) or input_file.parent / f"{input_file.stem}_chapters"
     anchor_text = str(params.get("anchor_text") or "").strip()
+    window_chars = int(params.get("search_window_chars") or 120)
     text, _ = read_text_any(input_file)
     anchors = [line.strip() for line in anchor_text.splitlines() if line.strip()]
     if not anchors:
         anchors = re.findall(r"^第.{1,12}[章节回].*$", text, re.MULTILINE)
     chunks = []
     if anchors:
-        positions = sorted({text.find(anchor) for anchor in anchors if text.find(anchor) >= 0})
+        positions = sorted({
+            find_anchor_split_position(text, pos, window_chars)
+            for anchor in anchors
+            for pos in [text.find(anchor)]
+            if pos >= 0
+        })
         for idx, pos in enumerate(positions):
             end = positions[idx + 1] if idx + 1 < len(positions) else len(text)
             chunks.append(text[pos:end])
     else:
         chunks = [text]
     if not context.get("preview"):
-        output_dir.mkdir(parents=True, exist_ok=True)
         for idx, chunk in enumerate(chunks, start=1):
-            (output_dir / f"chapter_{idx:03d}.txt").write_text(chunk, encoding="utf-8")
+            write_text_file(fit_path_length(output_dir / f"chapter_{idx:03d}.txt"), chunk, encoding="utf-8")
     return result(True, "章节切分完成", str(output_dir), {"chapters": len(chunks)})

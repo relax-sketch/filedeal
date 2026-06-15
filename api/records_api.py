@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response
 
-from core.runner import list_tasks, read_log, read_task, records_csv, request_cancel
+from core.runner import list_tasks, read_log, read_task, records_csv, request_cancel, resume_task
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -55,3 +55,13 @@ def cancel_task(task_id: str):
         return request_cancel(task_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Task not found")
+
+
+@router.post("/{task_id}/resume")
+def resume_task_api(task_id: str):
+    try:
+        return resume_task(task_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

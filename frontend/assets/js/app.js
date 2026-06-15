@@ -1,6 +1,13 @@
 (() => {
 const { API, routes, qs, esc, apiJson, UI, readForm, recordsTable, pollTask, iconForCategory } = window.ProtonCore;
 
+async function resumeTaskFromRecord(taskId) {
+  const resp = await apiJson(`${API.tasks}/${taskId}/resume`, { method: "POST" });
+  if (resp.task_id) {
+    location.href = `detail.html?id=${encodeURIComponent(resp.task_id)}`;
+  }
+}
+
 async function homePage() {
   UI.shell("home", "欢迎回来", "本地小工具合集，用于快速执行图片视频、TXT 清洗、文件批处理和固定流程。");
   const [tools, flows, tasks] = await Promise.all([apiJson(API.tools), apiJson(API.flows), apiJson(API.tasks)]);
@@ -72,6 +79,10 @@ function advancedOpenStorageKey(kind, id) {
   return `proton:${kind}:${id}:advanced-open:v1`;
 }
 
+function usageOpenStorageKey(kind, id) {
+  return `proton:${kind}:${id}:usage-open:v1`;
+}
+
 function outputAutoStorageKey(kind, id, fieldName) {
   return `proton:${kind}:${id}:${fieldName}:auto-output:v1`;
 }
@@ -132,6 +143,40 @@ function renderRunForm(schema, kind, id) {
       <div class="advanced-settings-body">${advancedHtml}</div>
     </details>
   </form>`;
+}
+
+function renderUsageDetails(item, kind, id) {
+  const usage = item.usage || {};
+  const rows = [
+    ["做什么", usage.purpose],
+    ["输入什么", usage.input],
+    ["输入结构", usage.input_structure],
+    ["输入规范", usage.input_rules],
+    ["输出结构", usage.output],
+    ["作用说明", usage.notes],
+  ].filter(([, value]) => value);
+  if (!rows.length) return "";
+
+  let usageOpen = false;
+  try {
+    usageOpen = localStorage.getItem(usageOpenStorageKey(kind, id)) === "1";
+  } catch {
+    usageOpen = false;
+  }
+
+  return `<details class="usage-details" ${usageOpen ? "open" : ""}>
+    <summary>
+      <span class="advanced-summary-main">
+        ${UI.icon("help")}
+        <b>使用说明</b>
+        <span class="muted small">输入、结构、规范和输出</span>
+      </span>
+      ${UI.icon("expand_more", "advanced-chevron")}
+    </summary>
+    <div class="usage-details-body">
+      ${rows.map(([label, value]) => `<div class="usage-row"><div class="usage-label">${esc(label)}</div><div class="usage-value">${esc(value)}</div></div>`).join("")}
+    </div>
+  </details>`;
 }
 
 function bindRunFormPersistence(form, kind, id) {
@@ -218,20 +263,20 @@ async function executionPage(kind) {
 
   const steps = item.steps?.length
     ? `<div class="step-list">${item.steps.map((s, i) => `<div class="step-item"><span class="step-index">${i + 1}</span><div><b>${esc(s)}</b><div class="muted small">预设步骤</div></div></div>`).join("")}</div>`
-    : `<div class="danger-callout"><b>安全提示</b><div class="muted small">预览模式会先查看计划执行的文件操作，不会写入变更。</div></div>`;
+    : `<div class="danger-callout"><b>安全提示</b><div class="muted small">点击执行会先生成结构预览，确认后才会真正开始任务。</div></div>`;
+  const usageDetails = renderUsageDetails(item, kind, id);
 
   const formPanel = UI.panel({
     title: "参数配置",
     subtitle: "根据工具注册信息生成",
     body: renderRunForm(schema, kind, id),
-    footer: `${UI.button({ label: "预览", icon: "visibility", id: "preview-btn" })}
-      ${UI.button({ label: "开始执行", icon: "play_arrow", id: "run-btn", variant: "primary" })}
+    footer: `${UI.button({ label: "结构预览", icon: "visibility", id: "action-btn", variant: "primary" })}
       ${UI.button({ label: "取消", icon: "stop_circle", id: "cancel-btn", variant: "danger", disabled: true })}`,
   });
 
   const logPanel = UI.panel({
-    title: "执行日志",
-    subtitle: "轮询任务状态与 log.txt",
+    title: "预览 / 执行日志",
+    subtitle: "先生成结构预览，确认后再执行真实任务",
     actions: `<span id="task-status">${UI.tag("queued")}</span>`,
     body: `<pre id="task-log" class="log-panel"></pre>`,
   });
@@ -239,43 +284,130 @@ async function executionPage(kind) {
   const infoPanel = UI.panel({
     title: kind === "tool" ? "工具说明" : "流程步骤",
     subtitle: item.category,
-    body: steps,
+    body: `<div class="content-stack">${usageDetails}${steps}</div>`,
   });
 
   const content = document.querySelector("#content");
   content.innerHTML = `<div class="workbench-grid"><div class="content-stack">${formPanel}${infoPanel}</div>${logPanel}</div>`;
 
   let taskId = null;
+  let confirmedPreviewSignature = "";
   const runForm = document.querySelector("#run-form");
+  const statusEl = document.querySelector("#task-status");
+  const logEl = document.querySelector("#task-log");
+  const actionBtn = document.querySelector("#action-btn");
+  const cancelBtn = document.querySelector("#cancel-btn");
   bindRunFormPersistence(runForm, kind, id);
-  async function submit(preview) {
+  const usage = document.querySelector(".usage-details");
+  if (usage) {
+    usage.addEventListener("toggle", () => {
+      try {
+        localStorage.setItem(usageOpenStorageKey(kind, id), usage.open ? "1" : "0");
+      } catch {
+        // Ignore storage failures; the help block still works.
+      }
+    });
+  }
+
+  function applyAutoOutputValues() {
     runForm.querySelectorAll("[data-auto-output-for]").forEach(toggle => {
       if (!toggle.checked) return;
       const input = runForm.elements[toggle.dataset.autoOutputFor];
       if (input) input.value = "";
     });
+  }
+
+  function currentParams() {
+    applyAutoOutputValues();
     const params = readForm(runForm);
     try {
       localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(params));
     } catch {
       // Ignore storage failures; submission should still proceed.
     }
-    params.preview = preview;
+    return params;
+  }
+
+  function paramsSignature(params) {
+    return JSON.stringify(params);
+  }
+
+  function setActionButton({ label, icon, disabled = false }) {
+    actionBtn.innerHTML = `${UI.icon(icon)}<span>${esc(label)}</span>`;
+    actionBtn.disabled = disabled;
+  }
+
+  function setIdlePreviewState(message = "") {
+    confirmedPreviewSignature = "";
+    if (!taskId) {
+      statusEl.innerHTML = UI.tag("queued");
+      cancelBtn.disabled = true;
+    }
+    setActionButton({ label: "结构预览", icon: "visibility" });
+    if (message) logEl.textContent = message;
+  }
+
+  async function requestPreview() {
+    const params = currentParams();
+    const preview = await apiJson(`${kind === "tool" ? API.tools : API.flows}/${id}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    confirmedPreviewSignature = paramsSignature(params);
+    statusEl.innerHTML = `${UI.tag("confirm")} <span class="muted small">已生成结构预览，请确认执行</span>`;
+    logEl.textContent = preview.markdown || "";
+    cancelBtn.disabled = false;
+    setActionButton({ label: "开始执行", icon: "play_arrow" });
+    return params;
+  }
+
+  async function submitRun() {
+    const params = currentParams();
+    if (paramsSignature(params) !== confirmedPreviewSignature) {
+      await requestPreview();
+      return;
+    }
+    setActionButton({ label: "开始执行", icon: "play_arrow" });
+    confirmedPreviewSignature = "";
+    statusEl.innerHTML = `${UI.tag("running")} <span class="muted small">正在启动真实任务</span>`;
     const resp = await apiJson(`${kind === "tool" ? API.tools : API.flows}/${id}/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
     taskId = resp.task_id;
-    document.querySelector("#cancel-btn").disabled = false;
+    cancelBtn.disabled = false;
     pollTask(taskId);
   }
-  document.querySelector("#preview-btn").addEventListener("click", e => { e.preventDefault(); submit(true); });
-  document.querySelector("#run-btn").addEventListener("click", e => { e.preventDefault(); submit(false); });
-  document.querySelector("#cancel-btn").addEventListener("click", async e => {
-    e.preventDefault();
-    if (taskId) await apiJson(`${API.tasks}/${taskId}/cancel`, { method: "POST" });
+
+  runForm.addEventListener("input", () => {
+    if (taskId) return;
+    if (!confirmedPreviewSignature) return;
+    const params = currentParams();
+    if (paramsSignature(params) === confirmedPreviewSignature) return;
+    statusEl.innerHTML = `${UI.tag("preview")} <span class="muted small">参数已更改，需要重新预览</span>`;
+    confirmedPreviewSignature = "";
+    setActionButton({ label: "结构预览", icon: "visibility" });
   });
+
+  actionBtn.addEventListener("click", async e => {
+    e.preventDefault();
+    if (confirmedPreviewSignature) {
+      await submitRun();
+      return;
+    }
+    await requestPreview();
+  });
+  cancelBtn.addEventListener("click", async e => {
+    e.preventDefault();
+    if (taskId) {
+      await apiJson(`${API.tasks}/${taskId}/cancel`, { method: "POST" });
+      return;
+    }
+    setIdlePreviewState("");
+  });
+  setIdlePreviewState("");
 }
 
 async function recordsPage() {
@@ -283,12 +415,24 @@ async function recordsPage() {
   const tasks = await apiJson(API.tasks);
   const content = document.querySelector("#content");
   content.innerHTML = recordsTable(tasks);
+  document.querySelectorAll("[data-task-resume]").forEach(btn => {
+    btn.addEventListener("click", async e => {
+      e.preventDefault();
+      await resumeTaskFromRecord(btn.dataset.taskResume);
+    });
+  });
 }
 
 async function detailPage() {
   const id = qs("id");
-  UI.shell("records", "执行详情", "完整任务摘要、参数快照、步骤日志和输出操作。");
   const task = await apiJson(`${API.tasks}/${id}`);
+  const resumable = ["running", "failed", "canceled"].includes(String(task.status || "").toLowerCase());
+  UI.shell(
+    "records",
+    "执行详情",
+    "完整任务摘要、参数快照、步骤日志和输出操作。",
+    resumable ? UI.button({ label: "继续执行", icon: "play_arrow", id: "resume-task", variant: "primary" }) : ""
+  );
   const log = await fetch(`${API.tasks}/${id}/logs`).then(r => r.text());
   const labelMap = {
     status: "状态",
@@ -310,6 +454,13 @@ async function detailPage() {
     </div>
     ${UI.panel({ title: "完整日志", actions: UI.button({ label: "导出日志", icon: "download", href: `/api/tasks/${id}/logs/export` }), body: `<pre class="log-panel">${esc(log)}</pre>` })}
   </div>`;
+  const resumeBtn = document.querySelector("#resume-task");
+  if (resumeBtn) {
+    resumeBtn.addEventListener("click", async e => {
+      e.preventDefault();
+      await resumeTaskFromRecord(id);
+    });
+  }
 }
 
 async function settingsPage() {

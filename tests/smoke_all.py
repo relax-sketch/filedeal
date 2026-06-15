@@ -11,7 +11,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.registry import FLOWS, TOOLS
+from core.preview import build_preview
+from core.path_utils import fit_path_length
 from core.runner import resolve_entry
+from tools.text_tools import find_anchor_split_position
 
 
 class MemoryLogger:
@@ -160,6 +163,14 @@ def tool_split_large_folder(root: Path) -> dict[str, Any]:
     return tool_group_files(root)
 
 
+def tool_sort_folders_by_size_rename(root: Path) -> dict[str, Any]:
+    input_dir = root / "input"
+    write_file(input_dir / "small" / "nested" / "a.bin", b"1")
+    write_file(input_dir / "medium" / "a.bin", b"12")
+    write_file(input_dir / "large" / "nested" / "a.bin", b"1234")
+    return {"input_dir": str(input_dir), "descending": True, "restore_prefixes": True}
+
+
 def tool_filter_files_by_size(root: Path) -> dict[str, Any]:
     input_dir = root / "input"
     write_file(input_dir / "nested" / "a.bin", b"123")
@@ -229,6 +240,7 @@ TOOL_CASES: dict[str, Callable[[Path], dict[str, Any]]] = {
     "split_novel_by_anchor": tool_split_novel_by_anchor,
     "group_files": tool_group_files,
     "split_large_folder": tool_split_large_folder,
+    "sort_folders_by_size_rename": tool_sort_folders_by_size_rename,
     "filter_files_by_size": tool_filter_files_by_size,
     "batch_change_extension": tool_batch_change_extension,
     "delete_empty_folders": tool_delete_empty_folders,
@@ -261,6 +273,12 @@ def run_case(item: dict[str, Any], params_factory: Callable[[Path], dict[str, An
                 raise AssertionError(f"{item['id']} did not move files out of nested folders")
         if item["id"] == "filter_files_by_size" and result["stats"].get("matched", 0) < 2:
             raise AssertionError(f"{item['id']} did not process nested files: {result}")
+        if item["id"] == "sort_folders_by_size_rename" and not preview:
+            input_dir = Path(params["input_dir"])
+            names = sorted(path.name for path in input_dir.iterdir() if path.is_dir())
+            expected_names = ["A_large", "B_medium", "C_small"]
+            if names != expected_names:
+                raise AssertionError(f"{item['id']} did not rank folders by recursive size: {names}")
         if item["id"] == "media_clean_standard" and not preview:
             output_dir = Path(params["output_dir"])
             expected = [
@@ -287,12 +305,59 @@ def run_all(kind: str, items: list[dict[str, Any]], cases: dict[str, Callable[[P
 
     by_id = {item["id"]: item for item in items}
     for item_id in sorted(registered):
+        usage = by_id[item_id].get("usage") or {}
+        required_usage_keys = {"purpose", "input", "input_structure", "input_rules", "output"}
+        missing_usage = [key for key in sorted(required_usage_keys) if not usage.get(key)]
+        if missing_usage:
+            raise AssertionError(f"{kind} {item_id} missing usage fields: {missing_usage}")
         run_case(by_id[item_id], cases[item_id], preview=True)
         run_case(by_id[item_id], cases[item_id], preview=False)
         print(f"OK {kind}: {item_id}")
 
 
+def run_preview_all(kind: str, items: list[dict[str, Any]], cases: dict[str, Callable[[Path], dict[str, Any]]]) -> None:
+    by_id = {item["id"]: item for item in items}
+    for item_id in sorted(by_id):
+        with tempfile.TemporaryDirectory(prefix=f"proton-preview-{item_id}-") as tmp:
+            params = cases[item_id](Path(tmp))
+            preview = build_preview(kind, item_id, params)
+            markdown = preview.get("markdown", "")
+            if not markdown.strip():
+                raise AssertionError(f"{kind} {item_id} preview is empty")
+            if item_id == "media_clean_standard" and "横屏" not in markdown:
+                raise AssertionError(f"{item_id} preview missing orientation tree: {markdown}")
+            if item_id == "split_video_gif" and "gif" not in markdown:
+                raise AssertionError(f"{item_id} preview missing gif folder: {markdown}")
+            print(f"OK {kind} preview: {item_id}")
+
+
+def test_anchor_split_position_priority() -> None:
+    text = "第一章内容结束。第二章 新章开始\n正文"
+    anchor_pos = text.index("第二章")
+    if find_anchor_split_position(text, anchor_pos, 20) != text.index("。") + 1:
+        raise AssertionError("Anchor split should fall back to punctuation before anchor")
+
+    text = "第一章内容结束。\n第二章 新章开始\n正文"
+    anchor_pos = text.index("第二章")
+    if find_anchor_split_position(text, anchor_pos, 20) != anchor_pos:
+        raise AssertionError("Anchor split should prefer newline before anchor")
+
+
+def test_fit_path_length_for_windows_targets() -> None:
+    root = Path("C:/very_long_root") / ("nested_" * 12)
+    target = root / ("x" * 220 + ".jpg")
+    fitted = fit_path_length(target)
+    if len(str(fitted)) > 240:
+        raise AssertionError(f"fit_path_length did not shorten target enough: {len(str(fitted))}")
+    if fitted.suffix != ".jpg":
+        raise AssertionError("fit_path_length should preserve the file suffix")
+
+
 def main() -> None:
+    test_anchor_split_position_priority()
+    test_fit_path_length_for_windows_targets()
+    run_preview_all("tool", TOOLS, TOOL_CASES)
+    run_preview_all("flow", FLOWS, FLOW_CASES)
     run_all("tool", TOOLS, TOOL_CASES)
     run_all("flow", FLOWS, FLOW_CASES)
 

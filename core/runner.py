@@ -133,6 +133,12 @@ def set_current_step(context: dict[str, Any], step: str, index: int | None = Non
     context["logger"].info("Step", step=step)
 
 
+def set_current_target(context: dict[str, Any], input_path: str) -> None:
+    task = read_task(context["task_id"])
+    task["current_target_path"] = input_path
+    write_task(task)
+
+
 def _duration(started_at: str, finished_at: str) -> float:
     start = datetime.fromisoformat(started_at)
     finish = datetime.fromisoformat(finished_at)
@@ -150,11 +156,13 @@ def _execute_task(task_id: str, entry: str, params: dict[str, Any]) -> None:
         "preview": bool(params.get("preview")),
         "check_cancel": None,
         "set_current_step": None,
+        "set_current_target": None,
     }
     context["check_cancel"] = lambda: check_cancel(context)
     context["set_current_step"] = lambda step, index=None: set_current_step(
         context, step, index
     )
+    context["set_current_target"] = lambda input_path: set_current_target(context, input_path)
     try:
         logger.info("Task started", preview=context["preview"])
         update_task(task_id, status="running")
@@ -241,9 +249,71 @@ def start_task(kind: str, item_id: str, params: dict[str, Any]) -> dict[str, Any
         "current_step_index": None,
         "cancel_requested": False,
         "log_path": str(log_path),
+        "current_target_path": "",
+        "resumed_from_task_id": params.get("_resumed_from_task_id", ""),
     }
     write_task(task)
     log_path.write_text("", encoding="utf-8")
     future = executor.submit(_execute_task, task_id, item["entry"], params)
     running_futures[task_id] = future
     return {"task_id": task_id, "status": "running"}
+
+
+def _extract_last_batch_child_from_log(task_id: str) -> str:
+    try:
+        text = read_log(task_id)
+    except FileNotFoundError:
+        return ""
+    marker = "Batch media folder | input_dir="
+    for line in reversed(text.splitlines()):
+        if marker not in line:
+            continue
+        tail = line.split(marker, 1)[1]
+        return tail.split(" output_dir=", 1)[0].strip()
+    return ""
+
+
+def _prepare_resume_params(task: dict[str, Any]) -> dict[str, Any]:
+    params = dict(task.get("params") or {})
+    params.pop("preview", None)
+    params["_resumed_from_task_id"] = task["task_id"]
+
+    if task.get("item_id") != "media_clean_standard":
+        return params
+
+    current_step = str(task.get("current_step") or "").strip()
+    current_target = str(task.get("current_target_path") or "").strip() or _extract_last_batch_child_from_log(task["task_id"])
+    if current_target:
+        params["input_dir"] = current_target
+        params["batch_subfolders"] = False
+    if current_step:
+        params["_resume_step"] = current_step
+    return params
+
+
+def resume_task(task_id: str) -> dict[str, Any]:
+    task = read_task(task_id)
+    if task.get("status") == "success":
+        raise ValueError("Successful task does not need resume")
+
+    future = running_futures.get(task_id)
+    if task.get("status") == "running" and future is not None and not future.done():
+        return {"task_id": task_id, "status": "running", "message": "Task is already running"}
+
+    params = _prepare_resume_params(task)
+    resumed = start_task(task["type"], task["item_id"], params)
+
+    if task.get("status") == "running":
+        finished_at = datetime.now().isoformat(timespec="seconds")
+        task.update(
+            {
+                "status": "canceled",
+                "finished_at": finished_at,
+                "duration_seconds": _duration(task["started_at"], finished_at),
+                "error": f"Resumed as {resumed['task_id']}",
+                "message": "原任务已转为继续执行",
+            }
+        )
+        write_task(task)
+
+    return resumed

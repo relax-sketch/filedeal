@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
-from core.path_utils import normalize_path, unique_path
+from core.path_utils import ensure_dir, fit_path_length, normalize_path, system_path, unique_path
 from core.safety import delete_or_trash
 from tools.common import iter_files, result
 
@@ -30,6 +33,7 @@ VIDEO_SUFFIXES = (
     ".vob",
     ".ogv",
 )
+DEDUP_SUFFIX_RE = re.compile(r"^(?P<stem>.+)_(?P<index>\d+)$")
 
 
 def _safe_name_part(value: str) -> str:
@@ -41,7 +45,7 @@ def _flatten_name(src: Path, input_dir: Path, index: int) -> str:
     rel = src.relative_to(input_dir)
     parts = [_safe_name_part(part) for part in rel.with_suffix("").parts]
     stem = "_".join(parts)
-    max_stem = 120
+    max_stem = 100
     if len(stem) > max_stem:
         stem = stem[-max_stem:]
     return f"{index:05d}_{stem}{src.suffix.lower()}"
@@ -78,7 +82,7 @@ def _ffprobe_video_size(path: Path) -> tuple[float, float] | None:
                 "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
                 "-of",
                 "json",
-                str(path),
+                system_path(path),
             ],
             check=False,
             capture_output=True,
@@ -118,7 +122,7 @@ def _cv2_video_size(path: Path) -> tuple[float, float] | None:
         import cv2
     except ImportError:
         return None
-    cap = cv2.VideoCapture(str(path))
+    cap = cv2.VideoCapture(system_path(path))
     try:
         width = float(cap.get(3) or 0)
         height = float(cap.get(4) or 0)
@@ -134,19 +138,57 @@ def _video_size(path: Path) -> tuple[float, float] | None:
 
 
 def _copy_or_move(src: Path, dst: Path, preview: bool, logger, move: bool = False) -> None:
-    target = unique_path(dst)
+    target = unique_path(fit_path_length(dst))
     if preview:
         logger.info("Preview file operation", source=str(src), target=str(target), move=move)
         return
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(target.parent)
     if move:
         try:
-            src.rename(target)
+            os.rename(system_path(src), system_path(target))
         except OSError:
-            shutil.move(str(src), str(target))
+            shutil.move(system_path(src), system_path(target))
     else:
-        shutil.copy2(src, target)
+        shutil.copy2(system_path(src), system_path(target))
     logger.info("File operation", source=str(src), target=str(target), move=move)
+
+
+def _remove_path(path: Path) -> None:
+    raw = system_path(path)
+    try:
+        os.remove(raw)
+        return
+    except PermissionError:
+        os.chmod(raw, stat.S_IWRITE)
+        os.remove(raw)
+
+
+def _canonical_duplicate_target(path: Path) -> Path | None:
+    match = DEDUP_SUFFIX_RE.match(path.stem)
+    if not match:
+        return None
+    return path.with_name(match.group("stem") + path.suffix)
+
+
+def _cleanup_duplicate_outputs(root: Path, logger) -> int:
+    if not root.exists():
+        return 0
+    removed = 0
+    for candidate in root.rglob("*"):
+        if not candidate.is_file():
+            continue
+        canonical = _canonical_duplicate_target(candidate)
+        if not canonical or not canonical.exists():
+            continue
+        try:
+            if candidate.stat().st_size != canonical.stat().st_size:
+                continue
+            _remove_path(candidate)
+            removed += 1
+            logger.info("Removed duplicate output", duplicate=str(candidate), canonical=str(canonical))
+        except Exception as exc:
+            logger.warning("Duplicate cleanup skipped", path=str(candidate), error=str(exc))
+    return removed
 
 
 def resize_images(params: dict, context: dict) -> dict:
@@ -166,7 +208,9 @@ def resize_images(params: dict, context: dict) -> dict:
     output_resolved = output_dir.resolve()
     if output_resolved != input_resolved:
         files = [src for src in files if output_resolved not in src.resolve().parents]
-    stats = {"seen": len(files), "resized": 0, "copied": 0, "moved": 0, "removed": 0, "failed": 0}
+    stats = {"seen": len(files), "resized": 0, "copied": 0, "moved": 0, "removed": 0, "deduped": 0, "failed": 0}
+    if move_files and not preview:
+        stats["deduped"] = _cleanup_duplicate_outputs(output_dir, logger)
 
     try:
         from PIL import Image
@@ -182,33 +226,44 @@ def resize_images(params: dict, context: dict) -> dict:
             logger.info("Preview resize image", path=str(src), size_mb=round(size_mb, 2), output=str(dst))
             continue
         try:
-            dst.parent.mkdir(parents=True, exist_ok=True)
+            ensure_dir(dst.parent)
             if Image is not None and size_mb > threshold:
-                target = unique_path(dst)
+                target = fit_path_length(dst)
+                if move_files and os.path.exists(system_path(target)):
+                    _remove_path(src)
+                    stats["removed"] += 1
+                    logger.info("Removed source image after existing resized output", source=str(src), target=str(target))
+                    continue
                 Image.MAX_IMAGE_PIXELS = None
-                with Image.open(src) as image:
+                with Image.open(system_path(src)) as image:
                     width, height = image.size
                     if width >= 2000 or height >= 2000:
                         new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
                         image = image.resize(new_size)
-                    image.save(target, quality=quality, optimize=True)
+                    image.save(system_path(target), quality=quality, optimize=True)
                 stats["resized"] += 1
                 logger.info("Resized image", source=str(src), target=str(target))
             else:
-                target = unique_path(dst)
+                target = fit_path_length(dst)
+                if move_files and os.path.exists(system_path(target)):
+                    _remove_path(src)
+                    stats["removed"] += 1
+                    logger.info("Removed source image after existing target", source=str(src), target=str(target))
+                    continue
                 if move_files:
                     try:
-                        src.rename(target)
+                        os.rename(system_path(src), system_path(target))
                     except OSError:
-                        shutil.move(str(src), str(target))
+                        shutil.move(system_path(src), system_path(target))
                     stats["moved"] += 1
                     logger.info("Moved image", source=str(src), target=str(target))
                 else:
-                    shutil.copy2(src, target)
+                    target = unique_path(target)
+                    shutil.copy2(system_path(src), system_path(target))
                     stats["copied"] += 1
                     logger.info("Copied image", source=str(src), target=str(target))
-            if move_files and Image is not None and size_mb > threshold and src.exists():
-                src.unlink()
+            if move_files and Image is not None and size_mb > threshold and os.path.exists(system_path(src)):
+                _remove_path(src)
                 stats["removed"] += 1
                 logger.info("Removed source image", source=str(src))
         except Exception as exc:
@@ -283,7 +338,7 @@ def classify_landscape_images(params: dict, context: dict) -> dict:
         try:
             is_landscape = True
             if Image is not None:
-                with Image.open(src) as image:
+                with Image.open(system_path(src)) as image:
                     width, height = image.size
                     is_landscape = width >= height
             if is_landscape:

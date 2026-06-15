@@ -83,6 +83,8 @@ const UI = {
       success: ["tag-safe", "成功"],
       failed: ["tag-high", "失败"],
       canceled: ["tag-medium", "已取消"],
+      preview: ["tag-status", "预览"],
+      confirm: ["tag-medium", "待确认"],
       running: ["tag-status", "执行中"],
       queued: ["tag-status", "等待中"],
     };
@@ -203,7 +205,12 @@ function recordsTable(tasks) {
       <td>${UI.tag(t.status)}</td>
       <td>${esc(t.started_at || "")}</td>
       <td>${esc(t.duration_seconds ?? "")}</td>
-      <td>${UI.button({ label: "查看", icon: "visibility", href: `detail.html?id=${encodeURIComponent(t.task_id)}` })}</td>
+      <td><div class="toolbar">
+        ${UI.button({ label: "查看", icon: "visibility", href: `detail.html?id=${encodeURIComponent(t.task_id)}` })}
+        ${["running", "failed", "canceled"].includes(String(t.status || "").toLowerCase())
+          ? UI.button({ label: "继续执行", icon: "play_arrow", id: "", extra: "task-resume-btn", variant: "primary" }).replace("<button ", `<button data-task-resume="${esc(t.task_id)}" `)
+          : ""}
+      </div></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
