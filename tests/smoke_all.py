@@ -83,9 +83,10 @@ def tool_image_resize(root: Path) -> dict[str, Any]:
 
 def tool_rename_and_classify(root: Path) -> dict[str, Any]:
     input_dir = root / "input"
-    write_image(input_dir / "photo.jpg")
-    write_file(input_dir / "clip.mp4")
-    write_text(input_dir / "note.txt", "note")
+    write_image(input_dir / "nested" / "photo.jpg")
+    write_file(input_dir / "nested" / "clip.webm")
+    write_file(input_dir / "nested" / "anim.gif")
+    write_text(input_dir / "nested" / "note.txt", "note")
     return {"input_dir": str(input_dir), "output_dir": str(root / "classified")}
 
 
@@ -161,8 +162,8 @@ def tool_split_large_folder(root: Path) -> dict[str, Any]:
 
 def tool_filter_files_by_size(root: Path) -> dict[str, Any]:
     input_dir = root / "input"
-    write_file(input_dir / "a.bin", b"123")
-    write_file(input_dir / "b.bin", b"456")
+    write_file(input_dir / "nested" / "a.bin", b"123")
+    write_file(input_dir / "nested" / "b.bin", b"456")
     return {"input_dir": str(input_dir), "output_dir": str(root / "filtered"), "min_size_mb": 0}
 
 
@@ -249,6 +250,10 @@ def run_case(item: dict[str, Any], params_factory: Callable[[Path], dict[str, An
         before = sorted(path.relative_to(root) for path in root.rglob("*"))
         result = resolve_entry(item["entry"])(params, context(preview=preview))
         assert_ok(result, item["id"])
+        if item["id"] == "rename_and_classify" and result["stats"].get("processed", 0) < 4:
+            raise AssertionError(f"{item['id']} did not process nested media files: {result}")
+        if item["id"] == "filter_files_by_size" and result["stats"].get("matched", 0) < 2:
+            raise AssertionError(f"{item['id']} did not process nested files: {result}")
         if preview:
             after = sorted(path.relative_to(root) for path in root.rglob("*"))
             if before != after:

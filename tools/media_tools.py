@@ -8,7 +8,19 @@ from core.safety import delete_or_trash
 from tools.common import iter_files, result
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
-VIDEO_SUFFIXES = (".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v")
+VIDEO_SUFFIXES = (
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".wmv",
+    ".m4v",
+    ".webm",
+    ".flv",
+    ".rmvb",
+    ".mpeg",
+    ".mpg",
+)
 
 
 def _copy_or_move(src: Path, dst: Path, preview: bool, logger, move: bool = False) -> None:
@@ -80,13 +92,21 @@ def rename_and_classify(params: dict, context: dict) -> dict:
     output_dir = normalize_path(params.get("output_dir")) or input_dir / "classified"
     logger = context["logger"]
     preview = context.get("preview", False)
-    files = iter_files(input_dir)
+    files = iter_files(input_dir, recursive=True)
     stats = {"processed": 0}
     for index, src in enumerate(files, start=1):
         context["check_cancel"]()
         if output_dir in src.parents:
             continue
-        category = "videos" if src.suffix.lower() in VIDEO_SUFFIXES else "images" if src.suffix.lower() in IMAGE_SUFFIXES else "other"
+        suffix = src.suffix.lower()
+        if suffix in VIDEO_SUFFIXES:
+            category = "videos"
+        elif suffix == ".gif":
+            category = "gifs"
+        elif suffix in IMAGE_SUFFIXES:
+            category = "images"
+        else:
+            category = "other"
         dst = output_dir / category / f"{index:05d}{src.suffix.lower()}"
         _copy_or_move(src, dst, preview, logger, move=False)
         stats["processed"] += 1

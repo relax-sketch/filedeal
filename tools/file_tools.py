@@ -46,17 +46,17 @@ def filter_files_by_size(params: dict, context: dict) -> dict:
     preview = context.get("preview", False)
     logger = context["logger"]
     stats = {"matched": 0}
-    for src in iter_files(input_dir):
+    for src in iter_files(input_dir, recursive=True):
         context["check_cancel"]()
         if output_dir in src.parents:
             continue
         if src.stat().st_size >= min_size:
-            dst = output_dir / src.name
+            dst = output_dir / src.relative_to(input_dir)
             stats["matched"] += 1
             if preview:
                 logger.info("Preview size filter copy", source=str(src), target=str(dst))
             else:
-                output_dir.mkdir(parents=True, exist_ok=True)
+                dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, unique_path(dst))
     return result(True, "文件大小筛选完成", str(output_dir), stats)
 
