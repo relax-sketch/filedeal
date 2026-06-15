@@ -1,6 +1,14 @@
 # Proton Local Toolkit
 
-This folder is self-contained. Copy the whole `app/` directory to another machine or folder, then run it with `uv`.
+This folder is self-contained. Copy the whole `app/` directory to another machine or folder, then run it from any location with:
+
+```cmd
+start.bat
+```
+
+The script switches to its own folder, opens the browser, and starts the app with `.venv`, `uv`, or global Python.
+
+Manual run with `uv`:
 
 ```powershell
 cd app
@@ -12,13 +20,13 @@ Alternative:
 
 ```powershell
 cd app
-uv run uvicorn main:app --host 127.0.0.1 --port 8001
+uv run uvicorn main:app --host 127.0.0.1 --port 8005
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8001/
+http://127.0.0.1:8005/
 ```
 
 Runtime files stay inside this folder:
