@@ -252,8 +252,25 @@ def run_case(item: dict[str, Any], params_factory: Callable[[Path], dict[str, An
         assert_ok(result, item["id"])
         if item["id"] == "rename_and_classify" and result["stats"].get("processed", 0) < 4:
             raise AssertionError(f"{item['id']} did not process nested media files: {result}")
+        if item["id"] == "rename_and_classify" and not preview:
+            output_dir = Path(params["output_dir"])
+            names = sorted(path.name for path in output_dir.iterdir() if path.is_file())
+            if len(names) < 4 or not all(name[:5].isdigit() and "_" in name for name in names):
+                raise AssertionError(f"{item['id']} did not create ordered flat names: {names}")
+            if (Path(params["input_dir"]) / "nested").exists():
+                raise AssertionError(f"{item['id']} did not move files out of nested folders")
         if item["id"] == "filter_files_by_size" and result["stats"].get("matched", 0) < 2:
             raise AssertionError(f"{item['id']} did not process nested files: {result}")
+        if item["id"] == "media_clean_standard" and not preview:
+            output_dir = Path(params["output_dir"])
+            expected = [
+                output_dir / "set_a_分辨率校正",
+                output_dir / "set_a_视频",
+                output_dir / "set_b_分辨率校正",
+            ]
+            missing = [str(path) for path in expected if not path.exists()]
+            if missing:
+                raise AssertionError(f"{item['id']} did not create named output dirs: {missing}")
         if preview:
             after = sorted(path.relative_to(root) for path in root.rglob("*"))
             if before != after:

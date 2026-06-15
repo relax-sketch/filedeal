@@ -72,6 +72,10 @@ function advancedOpenStorageKey(kind, id) {
   return `proton:${kind}:${id}:advanced-open:v1`;
 }
 
+function outputAutoStorageKey(kind, id, fieldName) {
+  return `proton:${kind}:${id}:${fieldName}:auto-output:v1`;
+}
+
 function readStoredRunForm(kind, id) {
   try {
     return JSON.parse(localStorage.getItem(runFormStorageKey(kind, id)) || "{}");
@@ -131,6 +135,9 @@ function renderRunForm(schema, kind, id) {
 }
 
 function bindRunFormPersistence(form, kind, id) {
+  const outputFields = [...form.querySelectorAll("[name=output_dir], [name=output_file]")];
+  outputFields.forEach(input => bindAutoOutputControl(form, input, kind, id));
+
   const save = () => {
     try {
       localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(readForm(form)));
@@ -151,6 +158,56 @@ function bindRunFormPersistence(form, kind, id) {
       }
     });
   }
+}
+
+function bindAutoOutputControl(form, input, kind, id) {
+  const field = input.closest(".form-field");
+  if (!field || field.querySelector("[data-auto-output-for]")) return;
+
+  const title = field.querySelector("span");
+  const titleText = title ? title.textContent : "输出路径";
+  const header = document.createElement("div");
+  header.className = "form-field-title";
+  header.innerHTML = `<span>${esc(titleText)}</span>
+    <label class="auto-output-toggle">
+      <input type="checkbox" data-auto-output-for="${esc(input.name)}">
+      <span>自动生成默认输出</span>
+    </label>`;
+  if (title) title.replaceWith(header);
+  else field.prepend(header);
+
+  const toggle = header.querySelector("[data-auto-output-for]");
+  let auto = !input.value;
+  try {
+    const stored = localStorage.getItem(outputAutoStorageKey(kind, id, input.name));
+    if (stored !== null) auto = stored === "1";
+  } catch {
+    auto = !input.value;
+  }
+
+  const apply = () => {
+    if (toggle.checked) {
+      input.value = "";
+      input.disabled = true;
+      input.placeholder = "自动生成默认输出";
+    } else {
+      input.disabled = false;
+      input.placeholder = "";
+      input.focus();
+    }
+  };
+
+  toggle.checked = auto;
+  apply();
+  toggle.addEventListener("change", () => {
+    apply();
+    try {
+      localStorage.setItem(outputAutoStorageKey(kind, id, input.name), toggle.checked ? "1" : "0");
+      localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(readForm(form)));
+    } catch {
+      // Ignore storage failures; the form still works.
+    }
+  });
 }
 
 async function executionPage(kind) {
@@ -192,6 +249,11 @@ async function executionPage(kind) {
   const runForm = document.querySelector("#run-form");
   bindRunFormPersistence(runForm, kind, id);
   async function submit(preview) {
+    runForm.querySelectorAll("[data-auto-output-for]").forEach(toggle => {
+      if (!toggle.checked) return;
+      const input = runForm.elements[toggle.dataset.autoOutputFor];
+      if (input) input.value = "";
+    });
     const params = readForm(runForm);
     try {
       localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(params));

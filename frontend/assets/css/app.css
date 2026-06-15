@@ -385,6 +385,40 @@ button:disabled { cursor: not-allowed; opacity: .56; }
   font-weight: 800;
 }
 
+.form-field-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-label);
+  line-height: var(--line-label);
+  font-weight: 800;
+}
+
+.auto-output-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: var(--radius-base);
+  background: var(--color-surface-container-low);
+  color: var(--color-on-surface);
+  font-size: var(--text-label);
+  line-height: var(--line-label);
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auto-output-toggle input {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+}
+
 .input,
 input,
 textarea,
@@ -405,6 +439,15 @@ textarea:focus,
 select:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(0,122,255,.12);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background: var(--color-surface-container);
+  color: var(--color-outline);
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 input[type="checkbox"] {

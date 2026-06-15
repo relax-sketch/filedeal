@@ -239,7 +239,7 @@ FLOWS: list[dict[str, Any]] = [
         "risk": "high",
         "entry": "pipelines.media_clean_pipeline:run",
         "supports_preview": True,
-        "steps": ["递归重命名", "视频/GIF 分离", "图片横屏分类", "图片降分辨率", "清理小视频文件"],
+        "steps": ["递归重命名", "视频/GIF 分离", "视频横竖屏分类", "图片横竖屏分类", "图片降分辨率", "清理小视频文件"],
         "schema": [
             {"name": "input_dir", "label": "输入文件夹", "type": "path", "required": True},
             {"name": "output_dir", "label": "输出文件夹", "type": "path", "required": False},
