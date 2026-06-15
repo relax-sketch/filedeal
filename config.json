@@ -1,0 +1,12 @@
+{
+  "default_input_dir": "",
+  "default_output_dir": "",
+  "log_dir": "D:\\Github_All\\Smallscripts\\新建文件夹 (2)\\app\\records\\tasks",
+  "recursive_default": false,
+  "delete_strategy": "_trash",
+  "max_concurrency": 2,
+  "dangerous_confirm": true,
+  "preview_default": true,
+  "allow_overwrite": false,
+  "save_logs": true
+}

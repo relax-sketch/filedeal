@@ -1,0 +1,11 @@
+{
+  "name": "Proton Local Toolkit",
+  "short_name": "Proton Local",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9f9ff",
+  "theme_color": "#007aff",
+  "icons": [
+    {"src": "/assets/icons/favicon.svg", "sizes": "64x64", "type": "image/svg+xml"}
+  ]
+}
