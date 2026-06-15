@@ -481,13 +481,21 @@ async function settingsPage() {
       ${UI.field({ name: "recursive_default", label: "默认递归处理", type: "boolean", default: settings.recursive_default })}
       ${UI.field({ name: "dangerous_confirm", label: "危险操作二次确认", type: "boolean", default: settings.dangerous_confirm })}
     </form>`,
-    footer: UI.button({ label: "保存设置", icon: "save", id: "save-settings", variant: "primary" }),
+    footer: `${UI.button({ label: "保存设置", icon: "save", id: "save-settings", variant: "primary" })}
+      ${UI.button({ label: "关闭服务", icon: "power_settings_new", id: "shutdown-service", variant: "danger" })}`,
   });
   document.querySelector("[name=delete_strategy]").value = settings.delete_strategy || "_trash";
   document.querySelector("#save-settings").addEventListener("click", async e => {
     e.preventDefault();
     await apiJson(API.settings, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(readForm(document.querySelector("#settings-form"))) });
     alert("设置已保存");
+  });
+  document.querySelector("#shutdown-service").addEventListener("click", async e => {
+    e.preventDefault();
+    if (!confirm("确定关闭本地服务？正在运行的任务会中断。")) return;
+    const res = await fetch(`${API.settings}/shutdown`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    alert("服务正在关闭");
   });
 }
 
