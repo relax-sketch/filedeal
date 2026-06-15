@@ -202,7 +202,7 @@ function recordsTable(tasks) {
       <td>${t.type === "flow" ? "固定流程" : "小工具"}</td>
       <td>${UI.tag(t.status)}</td>
       <td>${esc(t.started_at || "")}</td>
-      <td>${esc(t.duration_seconds || "")}</td>
+      <td>${esc(t.duration_seconds ?? "")}</td>
       <td>${UI.button({ label: "查看", icon: "visibility", href: `detail.html?id=${encodeURIComponent(t.task_id)}` })}</td>
     </tr>`).join("")}</tbody>
   </table></div>`;

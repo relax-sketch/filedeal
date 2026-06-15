@@ -239,7 +239,7 @@ async function detailPage() {
     error: "错误信息",
   };
   const rows = Object.keys(labelMap)
-    .map(k => `<tr><th>${labelMap[k]}</th><td>${k === "status" ? UI.tag(task[k]) : esc(task[k] || "")}</td></tr>`).join("");
+    .map(k => `<tr><th>${labelMap[k]}</th><td>${k === "status" ? UI.tag(task[k]) : esc(task[k] ?? "")}</td></tr>`).join("");
   const content = document.querySelector("#content");
   content.innerHTML = `<div class="workbench-grid">
     <div class="content-stack">

@@ -12,11 +12,11 @@ VIDEO_SUFFIXES = (".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v")
 
 
 def _copy_or_move(src: Path, dst: Path, preview: bool, logger, move: bool = False) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
     target = unique_path(dst)
     if preview:
         logger.info("Preview file operation", source=str(src), target=str(target), move=move)
         return
+    dst.parent.mkdir(parents=True, exist_ok=True)
     if move:
         shutil.move(str(src), str(target))
     else:
