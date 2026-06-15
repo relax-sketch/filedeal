@@ -170,7 +170,7 @@ const UI = {
       </label>`;
     }
     if (field.type === "textarea") {
-      return `<label class="form-field"><span>${esc(field.label)}</span><textarea name="${esc(field.name)}" ${field.required ? "required" : ""}></textarea></label>`;
+      return `<label class="form-field"><span>${esc(field.label)}</span><textarea name="${esc(field.name)}" ${field.required ? "required" : ""}>${esc(value)}</textarea></label>`;
     }
     if (field.type === "select") {
       return `<label class="form-field"><span>${esc(field.label)}</span><select name="${esc(field.name)}">${(field.options || []).map(o => `<option value="${esc(o)}" ${o === value ? "selected" : ""}>${esc(optionLabel(field, o))}</option>`).join("")}</select></label>`;

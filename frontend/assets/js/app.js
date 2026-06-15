@@ -64,9 +64,99 @@ async function flowsPage() {
   })).join("")}</div>`;
 }
 
+function runFormStorageKey(kind, id) {
+  return `proton:${kind}:${id}:run-form:v1`;
+}
+
+function advancedOpenStorageKey(kind, id) {
+  return `proton:${kind}:${id}:advanced-open:v1`;
+}
+
+function readStoredRunForm(kind, id) {
+  try {
+    return JSON.parse(localStorage.getItem(runFormStorageKey(kind, id)) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function schemaWithStoredDefaults(schema, kind, id) {
+  const stored = readStoredRunForm(kind, id);
+  return schema.map(field => Object.prototype.hasOwnProperty.call(stored, field.name)
+    ? { ...field, default: stored[field.name] }
+    : field);
+}
+
+function renderRunForm(schema, kind, id) {
+  const normalFields = schema.filter(field => !field.advanced);
+  const advancedFields = schema.filter(field => field.advanced);
+  let advancedOpen = false;
+  try {
+    advancedOpen = localStorage.getItem(advancedOpenStorageKey(kind, id)) === "1";
+  } catch {
+    advancedOpen = false;
+  }
+  const normalHtml = normalFields.map(UI.field).join("");
+  if (!advancedFields.length) return `<form id="run-form" class="form">${normalHtml}</form>`;
+
+  const groups = [];
+  advancedFields.forEach(field => {
+    const title = field.advanced_group || "高级设置";
+    let group = groups.find(item => item.title === title);
+    if (!group) {
+      group = { title, fields: [] };
+      groups.push(group);
+    }
+    group.fields.push(field);
+  });
+
+  const advancedHtml = groups.map(group => `<div class="advanced-group">
+    <div class="advanced-group-title">${esc(group.title)}</div>
+    <div class="advanced-grid">${group.fields.map(UI.field).join("")}</div>
+  </div>`).join("");
+
+  return `<form id="run-form" class="form">${normalHtml}
+    <details class="advanced-settings" ${advancedOpen ? "open" : ""}>
+      <summary>
+        <span class="advanced-summary-main">
+          ${UI.icon("tune")}
+          <b>高级设置</b>
+          <span class="muted small">小工具参数，自动保存上次更改</span>
+        </span>
+        ${UI.icon("expand_more", "advanced-chevron")}
+      </summary>
+      <div class="advanced-settings-body">${advancedHtml}</div>
+    </details>
+  </form>`;
+}
+
+function bindRunFormPersistence(form, kind, id) {
+  const save = () => {
+    try {
+      localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(readForm(form)));
+    } catch {
+      // Storage can be unavailable in restricted browser contexts.
+    }
+  };
+  form.addEventListener("input", save);
+  form.addEventListener("change", save);
+
+  const advanced = form.querySelector(".advanced-settings");
+  if (advanced) {
+    advanced.addEventListener("toggle", () => {
+      try {
+        localStorage.setItem(advancedOpenStorageKey(kind, id), advanced.open ? "1" : "0");
+      } catch {
+        // Ignore storage failures; the form still works.
+      }
+    });
+  }
+}
+
 async function executionPage(kind) {
   const id = qs("id");
   const item = await apiJson(`${kind === "tool" ? API.tools : API.flows}/${id}`);
+  const schema = schemaWithStoredDefaults(item.schema, kind, id);
   UI.shell(kind === "tool" ? "tools" : "flows", item.name, item.description, UI.tag(item.risk));
 
   const steps = item.steps?.length
@@ -76,7 +166,7 @@ async function executionPage(kind) {
   const formPanel = UI.panel({
     title: "参数配置",
     subtitle: "根据工具注册信息生成",
-    body: `<form id="run-form" class="form">${item.schema.map(UI.field).join("")}</form>`,
+    body: renderRunForm(schema, kind, id),
     footer: `${UI.button({ label: "预览", icon: "visibility", id: "preview-btn" })}
       ${UI.button({ label: "开始执行", icon: "play_arrow", id: "run-btn", variant: "primary" })}
       ${UI.button({ label: "取消", icon: "stop_circle", id: "cancel-btn", variant: "danger", disabled: true })}`,
@@ -99,8 +189,15 @@ async function executionPage(kind) {
   content.innerHTML = `<div class="workbench-grid"><div class="content-stack">${formPanel}${infoPanel}</div>${logPanel}</div>`;
 
   let taskId = null;
+  const runForm = document.querySelector("#run-form");
+  bindRunFormPersistence(runForm, kind, id);
   async function submit(preview) {
-    const params = readForm(document.querySelector("#run-form"));
+    const params = readForm(runForm);
+    try {
+      localStorage.setItem(runFormStorageKey(kind, id), JSON.stringify(params));
+    } catch {
+      // Ignore storage failures; submission should still proceed.
+    }
     params.preview = preview;
     const resp = await apiJson(`${kind === "tool" ? API.tools : API.flows}/${id}/run`, {
       method: "POST",
