@@ -1,6 +1,14 @@
 (() => {
 const { API, routes, qs, esc, apiJson, UI, readForm, recordsTable, pollTask, iconForCategory } = window.ProtonCore;
 
+function summarizeLog(text, headLines = 100, tailLines = 200) {
+  const lines = String(text || "").split(/\r?\n/);
+  if (lines.length <= headLines + tailLines) return text;
+  const head = lines.slice(0, headLines).join("\n");
+  const tail = lines.slice(-tailLines).join("\n");
+  return `${head}\n\n....\n\n${tail}`;
+}
+
 async function resumeTaskFromRecord(taskId) {
   const resp = await apiJson(`${API.tasks}/${taskId}/resume`, { method: "POST" });
   if (resp.task_id) {
@@ -446,13 +454,14 @@ async function detailPage() {
   };
   const rows = Object.keys(labelMap)
     .map(k => `<tr><th>${labelMap[k]}</th><td>${k === "status" ? UI.tag(task[k]) : esc(task[k] ?? "")}</td></tr>`).join("");
+  const displayLog = summarizeLog(log, 100, 200);
   const content = document.querySelector("#content");
   content.innerHTML = `<div class="workbench-grid">
     <div class="content-stack">
       ${UI.panel({ title: task.name, subtitle: task.task_id, body: `<div class="table-wrap"><table><tbody>${rows}</tbody></table></div>` })}
       ${UI.panel({ title: "参数快照", body: `<pre class="log-panel">${esc(JSON.stringify(task.params || {}, null, 2))}</pre>` })}
     </div>
-    ${UI.panel({ title: "完整日志", actions: UI.button({ label: "导出日志", icon: "download", href: `/api/tasks/${id}/logs/export` }), body: `<pre class="log-panel">${esc(log)}</pre>` })}
+    ${UI.panel({ title: "完整日志", actions: UI.button({ label: "导出日志", icon: "download", href: `/api/tasks/${id}/logs/export` }), body: `<pre class="log-panel">${esc(displayLog)}</pre>` })}
   </div>`;
   const resumeBtn = document.querySelector("#resume-task");
   if (resumeBtn) {

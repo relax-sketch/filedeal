@@ -139,6 +139,13 @@ def set_current_target(context: dict[str, Any], input_path: str) -> None:
     write_task(task)
 
 
+def mark_target_completed(context: dict[str, Any], input_path: str) -> None:
+    task = read_task(context["task_id"])
+    task["last_completed_target_path"] = input_path
+    task["current_target_path"] = ""
+    write_task(task)
+
+
 def _duration(started_at: str, finished_at: str) -> float:
     start = datetime.fromisoformat(started_at)
     finish = datetime.fromisoformat(finished_at)
@@ -157,12 +164,14 @@ def _execute_task(task_id: str, entry: str, params: dict[str, Any]) -> None:
         "check_cancel": None,
         "set_current_step": None,
         "set_current_target": None,
+        "mark_target_completed": None,
     }
     context["check_cancel"] = lambda: check_cancel(context)
     context["set_current_step"] = lambda step, index=None: set_current_step(
         context, step, index
     )
     context["set_current_target"] = lambda input_path: set_current_target(context, input_path)
+    context["mark_target_completed"] = lambda input_path: mark_target_completed(context, input_path)
     try:
         logger.info("Task started", preview=context["preview"])
         update_task(task_id, status="running")
@@ -250,6 +259,7 @@ def start_task(kind: str, item_id: str, params: dict[str, Any]) -> dict[str, Any
         "cancel_requested": False,
         "log_path": str(log_path),
         "current_target_path": "",
+        "last_completed_target_path": "",
         "resumed_from_task_id": params.get("_resumed_from_task_id", ""),
     }
     write_task(task)
@@ -276,6 +286,8 @@ def _extract_last_batch_child_from_log(task_id: str) -> str:
 def _prepare_resume_params(task: dict[str, Any]) -> dict[str, Any]:
     params = dict(task.get("params") or {})
     params.pop("preview", None)
+    params.pop("_resume_batch_target", None)
+    params.pop("_resume_after_target", None)
     params["_resumed_from_task_id"] = task["task_id"]
 
     if task.get("item_id") != "media_clean_standard":
@@ -283,7 +295,13 @@ def _prepare_resume_params(task: dict[str, Any]) -> dict[str, Any]:
 
     current_step = str(task.get("current_step") or "").strip()
     current_target = str(task.get("current_target_path") or "").strip() or _extract_last_batch_child_from_log(task["task_id"])
-    if current_target:
+    last_completed_target = str(task.get("last_completed_target_path") or "").strip()
+    if params.get("batch_subfolders"):
+        if current_target:
+            params["_resume_batch_target"] = current_target
+        elif last_completed_target:
+            params["_resume_after_target"] = last_completed_target
+    elif current_target:
         params["input_dir"] = current_target
         params["batch_subfolders"] = False
     if current_step:

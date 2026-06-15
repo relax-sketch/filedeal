@@ -62,6 +62,22 @@ def _resume_index(params: dict) -> int:
     return STEP_INDEX.get(step, 1)
 
 
+def _child_resume_plan(children: list[Path], params: dict) -> tuple[int, int | None]:
+    target = normalize_path(params.get("_resume_batch_target"))
+    after = normalize_path(params.get("_resume_after_target"))
+    if target:
+        target_resolved = target.resolve()
+        for index, child in enumerate(children):
+            if child.resolve() == target_resolved:
+                return index, index
+    if after:
+        after_resolved = after.resolve()
+        for index, child in enumerate(children):
+            if child.resolve() == after_resolved:
+                return index + 1, None
+    return 0, None
+
+
 def _run_one(params: dict, context: dict) -> dict:
     logger = context["logger"]
     stats = {}
@@ -181,17 +197,29 @@ def run(params: dict, context: dict) -> dict:
             stats["folders"] += 1
         return result(True, "图片视频整理标准流程已整理现有视频目录", str(input_dir), stats)
 
-    for child in children:
+    start_index, resume_child_index = _child_resume_plan(children, params)
+    if start_index > 0:
+        for skipped in children[:start_index]:
+            context["logger"].info("Resume skip batch child", input_dir=str(skipped))
+            stats["children"][skipped.name] = {"skipped": True, "resume": True, "reason": "already_completed"}
+
+    for child_index, child in enumerate(children[start_index:], start=start_index):
         context["check_cancel"]()
         child_params = dict(params)
         child_params["batch_subfolders"] = False
         child_params["input_dir"] = str(child)
         if output_dir:
             child_params["output_dir"] = str(output_dir)
+        if resume_child_index is None or child_index != resume_child_index:
+            child_params.pop("_resume_step", None)
+        child_params.pop("_resume_batch_target", None)
+        child_params.pop("_resume_after_target", None)
         if context.get("set_current_target"):
             context["set_current_target"](str(child))
         context["logger"].info("Batch media folder", input_dir=str(child), output_dir=child_params.get("output_dir", ""))
         child_result = _run_one(child_params, context)
+        if context.get("mark_target_completed"):
+            context["mark_target_completed"](str(child))
         stats["folders"] += 1
         stats["children"][child.name] = child_result["stats"]
 
